@@ -11,6 +11,7 @@ import { Semaphore, parallel } from "./parallel";
 import { choose, mappings } from "./router";
 import { parseReport } from "./prompts";
 import { OpenCode2, type Runtime } from "./opencode2";
+import { RECOVERY_GUIDANCE } from "./guidance";
 export class Bridge {
   readonly state: State;
   readonly gate: Semaphore;
@@ -185,6 +186,7 @@ export class Bridge {
       patchAvailable: Boolean(r.patchHash),
       patchId: r.patchHash ? id : undefined,
       warnings: [...warnings, ...report.risks],
+      recovery: r.status === "completed" ? undefined : RECOVERY_GUIDANCE,
       sessionID: r.sessionID,
       worktree: r.snapshot?.worktree,
       tools: response?.tools ?? [],

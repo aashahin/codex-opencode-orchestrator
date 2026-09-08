@@ -10,6 +10,7 @@ import { parallel, Semaphore } from "../src/parallel";
 import type { Model } from "../src/router";
 import type { Runtime } from "../src/opencode2";
 import { fixture, dispose } from "./helpers";
+import { RECOVERY_GUIDANCE, WORKFLOW_GUIDANCE } from "../src/guidance";
 const m: Model = {
   id: "fixture",
   providerID: "opencode-go",
@@ -129,6 +130,8 @@ test("delegation preserves isolated successful work through parallel failure and
       "failed",
       "timed_out",
     ]);
+    expect((result.results[1] as any).recovery).toBe(RECOVERY_GUIDANCE);
+    expect((result.results[2] as any).recovery).toBe(RECOVERY_GUIDANCE);
     expect(await readFile(join(repo, "a.txt"), "utf8")).toBe("base\n");
     const records = await b.state.list();
     for (const r of records) await b.discard(r.id, true);
@@ -153,6 +156,7 @@ test("MCP schemas, structured responses and error validation through real MCP tr
   try {
     await server.connect(a);
     await client.connect(c);
+    expect(client.getInstructions()).toBe(WORKFLOW_GUIDANCE);
     const tools = await client.listTools();
     expect(tools.tools.map((t) => t.name)).toEqual(
       expect.arrayContaining([
@@ -172,6 +176,12 @@ test("MCP schemas, structured responses and error validation through real MCP tr
       arguments: {},
     });
     expect(listed.structuredContent).toEqual({ workers: [] });
+    const missing = await client.callTool({
+      name: "oc_worker_diff",
+      arguments: { id: "00000000-0000-4000-8000-000000000000" },
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing.content)).toContain("Never resume a raw ses_");
     const invalid = await client.callTool({
       name: "oc_delegate",
       arguments: { task: "x", repoDir: "/tmp", mode: "wrong" },

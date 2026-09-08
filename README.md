@@ -62,8 +62,12 @@ codex mcp get opencode_workers
 The installer records absolute paths to Bun and this checkout, so keep the
 checkout in place. It merges only `mcp_servers.opencode_workers` into the selected
 Codex home and `~/.codex/config.toml`. It backs up changed configs and preserves
-existing authentication, providers, profiles, and unrelated settings. Repeated
-installation is idempotent. It also creates `codex-orchestrator-doctor` and two
+existing authentication, providers, profiles, and unrelated settings. It also
+merges a marked OpenCode delegation/recovery section into the active global
+`AGENTS.md` (or non-empty `AGENTS.override.md`) in each selected Codex home,
+preserving existing instructions outside that section. Changed instruction files
+are backed up. Repeated installation is idempotent.
+It also creates `codex-orchestrator-doctor` and two
 optional Zen shortcuts under `~/.local/bin`; add that directory to `PATH` if needed.
 Shell startup files are not edited by the installer.
 
@@ -98,7 +102,32 @@ In an initialized Git repository, run `codex` and give it this instruction:
 > worker patches before applying them. Run final tests yourself.
 
 Copy or merge `templates/AGENTS.orchestration.md` into a project's instructions if
-wanted. Installation never modifies a project's `AGENTS.md`.
+wanted. Installation updates global Codex guidance, not a project's `AGENTS.md`.
+
+## Compaction, follow-up work, and failures
+
+OpenCode work stays on `oc_delegate` / `oc_delegate_parallel`, including review
+corrections. Do not recover workers with `opencode2 run --standalone --session`,
+V1 `opencode run`, or direct API/client scripts. Those paths bypass bridge state,
+permissions, patch review, and the shared-service workflow.
+
+The installer adds persistent global guidance, and the MCP server supplies the
+same workflow during initialization. Tool descriptions and failure responses also
+carry the recovery rule so it is available when conversation details are compacted.
+After compaction, call `oc_health` and `oc_list_workers`; match the original
+repository and bridge worker UUID, not a raw OpenCode `ses_` ID. Confirm old work
+has stopped before replacing it. Inspect preserved patches, apply acceptable
+changes with `oc_apply_worker_patch`, then delegate the remaining task against the
+original repository. Unaccepted patches stay available for review.
+
+Summaries should retain the MCP transport requirement, original `repoDir`, worker
+UUIDs, selected model, ownership scope, patch status, and next MCP action. If tools
+are unavailable, reconnect or repair the bridge; an error does not authorize a
+different transport. These are agent instructions, not an OS-level ban on CLI
+execution. Restart Codex after updating so it loads the new global guidance and
+MCP metadata. Codex discovers global guidance once per launched session; see the
+[official instruction-loading documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+
 
 ## MCP tools
 
@@ -184,6 +213,12 @@ implementers within scope; `.git` and OpenCode configuration are protected. This
 an intentional safe shell policy: V2 shell is not an OS sandbox. Tests are listed
 for the principal orchestrator to run; worker claims are explicitly unverified.
 
+Workers are bounded by bridge timeouts and cancellation, not a V2 `steps` cap.
+V2 forces a text-only final request at that cap; providers that accept only
+`tool_choice=auto` can reject it. An earlier 24-step cap caused this failure on
+long Muse tasks. See [OpenCode's step-limit behavior](https://opencode.ai/v2/docs/agents#steps).
+
+
 Patch application requires complete diff inspection and its digest token. Changed
 HEAD, changed target content or index entries, symlink parents and wrong repositories
 are refused. Other user files and the staging area remain intact. Application never
@@ -251,9 +286,10 @@ bun test
 bun run typecheck
 ```
 
-The 25 automated tests cover real Git fixtures, dirty snapshots, patch conflicts,
+The 27 automated tests cover real Git fixtures, dirty snapshots, patch conflicts,
 permission policy, installer preservation, launcher arguments, cancellation,
-concurrency, and the MCP protocol. They use controlled worker responses and do not
+concurrency, persistent recovery instructions, and the MCP protocol. They use
+controlled worker responses and do not
 require API keys or a running OpenCode service. GitHub Actions runs these tests
 and TypeScript checking on each push and pull request.
 
@@ -263,6 +299,7 @@ Optional live checks require an OpenCode 2 service and suitable provider access:
 bun run smoke                 # Uses opencode/mimo-v2.5-free when available
 bun scripts/paid-smoke.ts      # Uses provider credits and optional Zen shortcuts
 bun scripts/recovery-smoke.ts  # Restarts the shared service; refuses active sessions
+bun scripts/tool-choice-smoke.ts # 26 sequential reads through MCP; uses Muse credits
 ```
 
 Live checks produce local `LIVE-TESTS.json`, `PAID-TESTS.json`, and
@@ -272,6 +309,11 @@ V2 permission decisions, concurrent sessions, and service restart recovery.
 Account-specific credentials, billing results, and session reports are not included
 in this repository. A discovered model does not guarantee authenticated or funded
 access.
+
+The tool-choice regression writes `TOOL-CHOICE-TESTS.json` locally and requires
+more than 24 model steps. It defaults to `opencode-go/muse-spark-1.3-contributor`;
+set `OC_SMOKE_MODEL` to explicitly test another enabled model. It is never run by
+CI and does not change routing or provider credentials.
 
 Official references: [Zen endpoints](https://opencode.ai/docs/zen/),
 [V2 permissions](https://opencode.ai/v2/docs/permissions),

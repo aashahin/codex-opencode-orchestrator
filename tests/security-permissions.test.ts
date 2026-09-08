@@ -77,6 +77,9 @@ test("scoped V2 config preserves original config and contains only V2 policy key
     );
     const c = await Bun.file(join(dir, ".opencode/opencode.jsonc")).json();
     expect(c.agents[id].mode).toBe("primary");
+    // A finite cap forces tool_choice=none at the last V2 step, rejected by
+    // auto-only providers. Timeout/cancellation tests cover the bridge bound.
+    expect(c.agents[id].steps).toBeUndefined();
     expect(c.agents[id].permission).toBeUndefined();
     expect(c.agents[id].permissions).toEqual(policy("read_only"));
     await restorePolicy(dir, state);

@@ -10,6 +10,7 @@ import {
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { ROOT, paths, preferences } from "./config";
+import { mergeGuidance } from "./guidance";
 export function mergeTable(
   source: string,
   name: string,
@@ -46,18 +47,33 @@ export function mergeTable(
   return result;
 }
 export async function mergeCodex(file: string, bun: string, root = ROOT) {
-  let original = "";
+  return updateFile(file, (original) =>
+    mergeTable(original, "mcp_servers.opencode_workers", {
+      command: bun,
+      args: ["run", join(root, "src/index.ts")],
+      startup_timeout_sec: 60,
+      tool_timeout_sec: 3600,
+    }),
+  );
+}
+async function optionalText(file: string) {
   try {
-    original = await readFile(file, "utf8");
+    return await readFile(file, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    return "";
   }
-  const result = mergeTable(original, "mcp_servers.opencode_workers", {
-    command: bun,
-    args: ["run", join(root, "src/index.ts")],
-    startup_timeout_sec: 60,
-    tool_timeout_sec: 3600,
-  });
+}
+export async function mergeCodexInstructions(home: string) {
+  const override = join(home, "AGENTS.override.md");
+  const file = (await optionalText(override)).trim()
+    ? override
+    : join(home, "AGENTS.md");
+  return updateFile(file, mergeGuidance);
+}
+async function updateFile(file: string, transform: (source: string) => string) {
+  const original = await optionalText(file);
+  const result = transform(original);
   if (result === original) return { file, changed: false };
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const backup =
@@ -92,8 +108,11 @@ export async function install() {
     ]),
   ];
   const changes = [];
-  for (const home of homes)
+  const instructions = [];
+  for (const home of homes) {
     changes.push(await mergeCodex(join(home, "config.toml"), bun));
+    instructions.push(await mergeCodexInstructions(home));
+  }
   const bin = join(homedir(), ".local/bin");
   await mkdir(bin, { recursive: true });
   for (const [name, model] of [
@@ -119,6 +138,7 @@ export async function install() {
   }
   return {
     changes,
+    instructions,
     bin,
     onPath: process.env.PATH?.split(":").includes(bin),
     config: paths.config,
