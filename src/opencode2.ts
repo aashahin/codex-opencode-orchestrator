@@ -1,0 +1,269 @@
+import {
+  OpenCode,
+  type OpenCodeClient,
+  type ModelInfo,
+  type SessionMessageAssistant,
+} from "@opencode-ai/client";
+import { randomUUID } from "node:crypto";
+import { Service } from "@opencode-ai/client/service";
+import { command } from "./git";
+import { ROOT, VERSION, type Task, type Config } from "./config";
+import { policy, decision } from "./permissions";
+import { contract } from "./prompts";
+import { redact, errorText } from "./security";
+import { mappings, type Model } from "./router";
+import { recordProviderProbe, providerProbe } from "./diagnostics";
+export interface RuntimeResult {
+  text: string;
+  sessionID: string;
+  tools: Array<{ name: string; status: string }>;
+}
+export interface Runtime {
+  models(signal?: AbortSignal): Promise<Model[]>;
+  run(
+    task: Task,
+    model: Model,
+    worktree: string,
+    agent: string,
+    signal: AbortSignal,
+    onSession: (id: string) => Promise<void>,
+  ): Promise<RuntimeResult>;
+  interrupt(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  health(config: Config): Promise<unknown>;
+}
+export class OpenCode2 implements Runtime {
+  private connecting?: Promise<OpenCodeClient>;
+  private current?: OpenCodeClient;
+  private endpointIdentity?: string;
+  private async connect(): Promise<OpenCodeClient> {
+    const explicit = process.env.OPENCODE_SERVER_URL;
+    let endpoint;
+    if (explicit) {
+      const u = new URL(explicit);
+      if (
+        u.username ||
+        u.password ||
+        !["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) ||
+        u.protocol !== "http:"
+      )
+        throw Error(
+          "OPENCODE_SERVER_URL must be a loopback HTTP service; remote locations cannot safely share local worktrees",
+        );
+      endpoint = { url: u.toString() };
+    } else {
+      endpoint = await Service.discover();
+      if (!endpoint) {
+        await command(
+          [Bun.which("opencode2") ?? "opencode2", "service", "start"],
+          { max: 4096 },
+        );
+        endpoint = await Service.discover();
+      }
+      if (!endpoint) throw Error("OpenCode 2 shared service not available");
+    }
+    const identity = JSON.stringify(endpoint);
+    const client =
+      this.current && this.endpointIdentity === identity
+        ? this.current
+        : OpenCode.make({
+            baseUrl: endpoint.url,
+            headers: Service.headers(endpoint),
+          });
+    const health = await client.health.get({
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!health.healthy || !health.version.startsWith("0.0.0-beta-"))
+      throw Error(
+        "Expected the supported OpenCode 2 beta service; refusing incompatible runtime",
+      );
+    this.endpointIdentity = identity;
+    this.current = client;
+    return client;
+  }
+  async client(): Promise<OpenCodeClient> {
+    if (!this.connecting)
+      this.connecting = this.connect().finally(() => {
+        this.connecting = undefined;
+      });
+    return this.connecting;
+  }
+  async models(signal?: AbortSignal) {
+    const c = await this.client();
+    const options = { signal: signal ?? AbortSignal.timeout(30000) };
+    const input = { location: { directory: ROOT } };
+    await c.plugin.awaitActivation(input, options);
+    const response = await c.model.list(input, options);
+    return response.data
+      .filter(
+        (m) =>
+          m.enabled &&
+          m.status !== "deprecated" &&
+          m.capabilities.tools &&
+          ["opencode-go", "opencode"].includes(m.providerID),
+      )
+      .map(normalizeModel);
+  }
+  async health(config: Config) {
+    try {
+      const c = await this.client();
+      const health = await c.health.get({ signal: AbortSignal.timeout(10000) });
+      const models = await this.models();
+      const integrations = (
+        await c.integration.list(
+          { location: { directory: ROOT } },
+          { signal: AbortSignal.timeout(10000) },
+        )
+      ).data;
+      return {
+        codex: {
+          binary: Bun.which("codex"),
+          version: (await command(["codex", "--version"])).toString().trim(),
+        },
+        opencode2: {
+          binary: Bun.which("opencode2"),
+          version: health.version,
+          service: "running",
+          api: "healthy",
+          pid: health.pid,
+        },
+        openCodeGo: {
+          authenticated: integrations.some(
+            (i) => i.id === "opencode-go" && i.connections.length > 0,
+          ),
+          models: models.filter((m) => m.providerID === "opencode-go").length,
+          lastLiveProbe: await providerProbe("opencode-go"),
+        },
+        zen: {
+          credentialInEnvironment: Boolean(process.env.OPENCODE_ZEN_API_KEY),
+        },
+        v1: {
+          installed: Boolean(Bun.which("opencode")),
+          ignoredByOrchestrator: true,
+        },
+        bridge: { version: VERSION, connected: true },
+        routing: mappings(models, config),
+      };
+    } catch (e) {
+      return {
+        bridge: { version: VERSION, connected: false },
+        error: errorText(e),
+      };
+    }
+  }
+  async run(
+    task: Task,
+    model: Model,
+    worktree: string,
+    agent: string,
+    signal: AbortSignal,
+    onSession: (id: string) => Promise<void>,
+  ): Promise<RuntimeResult> {
+    const c = await this.client();
+    const location = { directory: worktree };
+    await c.plugin.awaitActivation({ location }, { signal });
+    const actual = (await c.agent.get({ agentID: agent, location }, { signal }))
+      .data;
+    const expected = policy(task.mode, task.scope);
+    // Fail closed on beta policy merge changes, before any prompt or model call.
+    if (
+      JSON.stringify(actual.permissions.slice(-expected.length)) !==
+        JSON.stringify(expected) ||
+      actual.mode !== "primary"
+    )
+      throw Error("V2 did not install the exact worker policy");
+    for (const [action, resource] of [
+      ["shell", "git push"],
+      ["subagent", "build"],
+      ["edit", "/tmp/escape"],
+      ["edit", ".git/config"],
+      ["external_directory", "/tmp/*"],
+    ])
+      if (decision(actual.permissions, action!, resource!) !== "deny")
+        throw Error("V2 policy failed closed");
+    const sessionID = "ses_" + randomUUID().replaceAll("-", "");
+    await onSession(sessionID);
+    const s = await c.session.create(
+      {
+        id: sessionID,
+        title: `Codex ${task.role}`,
+        agent,
+        model: { id: model.id, providerID: model.providerID },
+        location,
+      },
+      { signal },
+    );
+    try {
+      await c.session.prompt(
+        { sessionID: s.id, text: contract(task, worktree) },
+        { signal },
+      );
+      await c.session.wait({ sessionID: s.id }, { signal });
+      const info = await c.session.get({ sessionID: s.id }, { signal });
+      const page = await c.message.list(
+        { sessionID: s.id, limit: 200, order: "asc" },
+        { signal },
+      );
+      const messages = page.data.filter(
+        (m): m is SessionMessageAssistant => m.type === "assistant",
+      );
+      if (
+        info.outcome !== "succeeded" ||
+        !messages.length ||
+        messages.some((m) => m.error)
+      )
+        throw Error(
+          `OpenCode 2 session ${info.outcome ?? "incomplete"}: ${redact(messages.find((m) => m.error)?.error?.message ?? "No successful final response", 1000)}`,
+        );
+      const last = messages.at(-1)!;
+      const text = last.content
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n");
+      if (!text.trim()) throw Error("Worker returned no final text");
+      await recordProviderProbe(model.providerID, model.key, true);
+      return {
+        sessionID: s.id,
+        text: redact(text),
+        tools: messages.flatMap((m) =>
+          m.content
+            .filter((p) => p.type === "tool")
+            .map((p) => ({ name: p.name, status: p.state.status })),
+        ),
+      };
+    } catch (e) {
+      if (!signal.aborted)
+        await recordProviderProbe(model.providerID, model.key, false, e);
+      await this.interrupt(s.id);
+      throw e;
+    }
+  }
+  async interrupt(id: string) {
+    const c = await this.client();
+    await c.session.interrupt(
+      { sessionID: id },
+      { signal: AbortSignal.timeout(10000) },
+    );
+    await c.session.wait(
+      { sessionID: id },
+      { signal: AbortSignal.timeout(15000) },
+    );
+  }
+  async remove(id: string) {
+    const c = await this.client();
+    await c.session.remove(
+      { sessionID: id },
+      { signal: AbortSignal.timeout(10000) },
+    );
+  }
+}
+function normalizeModel(m: ModelInfo): Model {
+  return {
+    id: m.id,
+    providerID: m.providerID,
+    modelID: m.modelID,
+    key: `${m.providerID}/${m.id}`,
+    vision: m.capabilities.input.includes("image"),
+    cost: Number(m.cost[0]?.input ?? 0) + Number(m.cost[0]?.output ?? 0),
+  };
+}

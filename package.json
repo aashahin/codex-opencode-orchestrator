@@ -1,0 +1,30 @@
+{
+  "name": "codex-opencode-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "start": "bun src/index.ts",
+    "install-local": "bun scripts/install.ts",
+    "smoke": "bun scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/client": "0.0.0-beta-19271",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.5.4",
+    "@iarna/toml": "2.2.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3",
+    "@types/iarna__toml": "2.0.5"
+  },
+  "description": "MCP bridge for Codex delegation through the OpenCode 2 shared service with isolated Git worktrees.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aashahin/codex-opencode-orchestrator.git"
+  },
+  "packageManager": "bun@1.4.2"
+}

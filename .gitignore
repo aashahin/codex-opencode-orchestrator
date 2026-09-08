@@ -1,0 +1,27 @@
+node_modules/
+coverage/
+dist/
+*.log
+*.tmp
+.DS_Store
+
+# Credentials and local configuration
+.env
+.env.*
+*.env
+*.pem
+*.key
+auth.json
+credentials.json
+.codex/
+.codex2/
+.opencode/
+
+# Local live-test evidence and runtime data
+/*-TESTS.json
+/VALIDATION.json
+/COMPATIBILITY-REVIEW.json
+/state/
+/cache/
+/worktrees/
+*.before-orchestrator-*
