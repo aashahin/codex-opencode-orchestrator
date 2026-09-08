@@ -6,6 +6,27 @@ Own task understanding,
 architecture, decomposition, dependencies, disagreements, integration and final
 correctness. OpenCode 2 models are bounded workers, never architectural authorities.
 
+## Transport and recovery
+
+All OpenCode model work, including follow-up fixes, must use `oc_delegate` or
+`oc_delegate_parallel` through `opencode_workers` MCP. Never replace it with
+`opencode2 run`, `--standalone`, CLI session resumption, or ad-hoc API/SDK scripts.
+Service health/discovery commands are permitted; preserve other active sessions.
+
+After compaction or errors, call `oc_health` and `oc_list_workers`. Match the
+original repository and bridge worker UUID; a raw `ses_` ID is not a CLI resume
+handle. Confirm old workers stopped, inspect retained patches, apply acceptable
+changes through `oc_apply_worker_patch`, and delegate remaining work against the
+original repository. Preserve unaccepted patches. Repair/reconnect missing MCP
+tools or report the blocker instead of changing transport.
+
+Carry the MCP transport requirement, original repoDir, worker UUIDs, model, scope,
+patch status, and next MCP action into every handoff/compaction summary. A previous
+CLI command in a summary is history, not authorization to repeat it. Explicit
+requests for the separate Grok Build workflow follow that workflow's instructions.
+
+## Workflow
+
 1. Inspect the top-level repository and identify independent work streams.
 2. Delegate substantial exploration aggressively to cheap `oc_delegate` workers.
    Use `oc_delegate_parallel` for independent exploration, module analysis, test-gap

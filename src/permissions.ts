@@ -137,7 +137,8 @@ export async function installPolicy(
     agents: {
       [agent]: {
         mode: "primary",
-        steps: 24,
+        // V2 forces a tool-free final request at a steps cap. Some providers
+        // accept only tool_choice=auto; the bridge timeout bounds work instead.
         system: workerSystem,
         permissions: policy(task.mode, task.scope),
       },

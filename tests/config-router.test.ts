@@ -3,7 +3,8 @@ import { mkdtemp, writeFile, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import TOML from "@iarna/toml";
 import { ConfigSchema, loadConfig } from "../src/config";
-import { mergeCodex, zenWrapper } from "../src/install";
+import { mergeCodex, mergeCodexInstructions, zenWrapper } from "../src/install";
+import { mergeGuidance, WORKFLOW_GUIDANCE } from "../src/guidance";
 import { choose, type Model } from "../src/router";
 import { dispose, config } from "./helpers";
 const model = (key: string, vision = false): Model => ({
@@ -82,6 +83,48 @@ test("optional Zen launcher supplies its provider and forwards arguments without
     expect(args.slice(2)).toEqual(["-c", 'model_provider="opencode_zen"', "-m", "gpt-6-astra", "exec", forwarded]);
     const missing = Bun.spawn([launcher, "exec", "test"], { env: { ...process.env, OPENCODE_ZEN_API_KEY: "" }, stdout: "pipe", stderr: "pipe" });
     expect(await missing.exited).toBe(78);
+  } finally {
+    await dispose(dir);
+  }
+});
+test("persistent guidance preserves user instructions and updates only its managed block", async () => {
+  const dir = await mkdtemp("/tmp/oc-guidance-");
+  try {
+    const file = join(dir, "AGENTS.md");
+    const existing = "# Personal workflow\n\nKeep the separate Grok workflow.\n";
+    await writeFile(file, existing);
+    const installed = await mergeCodexInstructions(dir);
+    const first = await readFile(file, "utf8");
+    expect(first.startsWith(existing)).toBe(true);
+    expect(first).toContain(WORKFLOW_GUIDANCE);
+    expect(await readFile(installed.backup!, "utf8")).toBe(existing);
+    expect((await mergeCodexInstructions(dir)).changed).toBe(false);
+    const edited = first.replace(WORKFLOW_GUIDANCE, "Previous bridge guidance") + "\nUser footer.\n";
+    await writeFile(file, edited);
+    await mergeCodexInstructions(dir);
+    const updated = await readFile(file, "utf8");
+    expect(updated).toBe(first + "\nUser footer.\n");
+    expect(mergeGuidance(updated)).toBe(updated);
+  } finally {
+    await dispose(dir);
+  }
+});
+test("persistent guidance honors the active global override and rejects malformed markers", async () => {
+  const dir = await mkdtemp("/tmp/oc-override-");
+  try {
+    const base = join(dir, "AGENTS.md"), override = join(dir, "AGENTS.override.md");
+    await writeFile(base, "Base instructions\n");
+    await writeFile(override, "Active instructions\n");
+    expect((await mergeCodexInstructions(dir)).file).toBe(override);
+    expect(await readFile(base, "utf8")).toBe("Base instructions\n");
+    expect(await readFile(override, "utf8")).toContain(WORKFLOW_GUIDANCE);
+    const broken = "Active instructions\n<!-- codex-opencode-orchestrator:begin -->";
+    await writeFile(override, broken);
+    await expect(mergeCodexInstructions(dir)).rejects.toThrow("Malformed");
+    expect(await readFile(override, "utf8")).toBe(broken);
+    await writeFile(override, " \n");
+    expect((await mergeCodexInstructions(dir)).file).toBe(base);
+    expect(await readFile(override, "utf8")).toBe(" \n");
   } finally {
     await dispose(dir);
   }

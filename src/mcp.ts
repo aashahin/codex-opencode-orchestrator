@@ -3,12 +3,13 @@ import { z } from "zod";
 import { Bridge } from "./delegate";
 import { VERSION, TaskSchema } from "./config";
 import { errorText, redact } from "./security";
+import { WORKFLOW_GUIDANCE, RECOVERY_GUIDANCE } from "./guidance";
 const Id = z.string().uuid();
 export function createMcp(bridge: Bridge) {
-  const server = new McpServer({
-    name: "opencode2-worker-bridge",
-    version: VERSION,
-  });
+  const server = new McpServer(
+    { name: "opencode2-worker-bridge", version: VERSION },
+    { instructions: WORKFLOW_GUIDANCE },
+  );
   const respond = async (fn: () => Promise<unknown>) => {
     try {
       const value = await fn();
@@ -29,7 +30,7 @@ export function createMcp(bridge: Bridge) {
     } catch (e) {
       return {
         isError: true,
-        content: [{ type: "text" as const, text: errorText(e) }],
+        content: [{ type: "text" as const, text: `${errorText(e)}\n${RECOVERY_GUIDANCE}` }],
       };
     }
   };
@@ -55,7 +56,7 @@ export function createMcp(bridge: Bridge) {
     "oc_delegate",
     {
       description:
-        "Delegate bounded work to one OpenCode 2 session. All workers use source snapshots. Write workers require write_isolated; no automatic integration.",
+        "Required path for OpenCode work, including follow-up fixes after compaction or errors. Never substitute opencode2 run/--standalone or direct API scripts. Creates one isolated V2 session from a source snapshot; writes require write_isolated; no automatic integration. Recover existing work with oc_list_workers first.",
       inputSchema: TaskSchema,
     },
     (args, extra) => respond(() => bridge.delegate(args, extra.signal)),
@@ -64,7 +65,7 @@ export function createMcp(bridge: Bridge) {
     "oc_delegate_parallel",
     {
       description:
-        "Run independent workers in concurrent isolated V2 sessions, with individual failures and timeouts.",
+        "Run independent workers through the MCP bridge in concurrent isolated V2 sessions, with individual failures and timeouts. Use this instead of parallel CLI processes; after compaction recover existing work with oc_list_workers first.",
       inputSchema: {
         tasks: z.array(TaskSchema).min(1).max(16),
         concurrency: z.number().int().min(1).max(8).optional(),
@@ -123,7 +124,7 @@ export function createMcp(bridge: Bridge) {
     "oc_list_workers",
     {
       description:
-        "List durable worker metadata for recovery and conservative cleanup.",
+        "Call after compaction, resume, or worker errors to recover durable worker state. Match bridge UUID and repository; raw ses_ IDs are not CLI resume handles. Preserve patches, inspect with oc_worker_diff, and use oc_delegate for remaining work. Never fall back to standalone CLI execution.",
       inputSchema: {},
     },
     () => respond(async () => ({ workers: await bridge.state.list() })),
