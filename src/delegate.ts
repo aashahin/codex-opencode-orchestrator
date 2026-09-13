@@ -9,6 +9,7 @@ import { State, type WorkerRecord } from "./state";
 import { collect, workerDiff, applyPatch } from "./patches";
 import { Semaphore, parallel } from "./parallel";
 import { choose, mappings } from "./router";
+import { requestedModel } from "./reasoning";
 import { parseReport } from "./prompts";
 import { OpenCode2, type Runtime } from "./opencode2";
 import { RECOVERY_GUIDANCE } from "./guidance";
@@ -85,6 +86,8 @@ export class Bridge {
       id,
       role: task.role,
       model: task.model ?? "",
+      requestedVariant: task.variant,
+      requestedReasoningEffort: task.reasoningEffort,
       status: "running",
       created: new Date().toISOString(),
       updated: new Date().toISOString(),
@@ -98,6 +101,7 @@ export class Bridge {
       const models = await this.runtime.models(signal);
       const model = choose(models, task.role, this.config, task.model);
       r.model = model.key;
+      r.selectedModel = requestedModel(model, task.reasoningEffort, task.variant);
       r.snapshot = await snapshot(
         task.repoDir,
         id,
@@ -126,6 +130,7 @@ export class Bridge {
         },
       );
       r.status = "completed";
+      r.effectiveModel = response.effectiveModel;
     } catch (e) {
       r.status = signal.aborted
         ? signal.reason?.name === "TimeoutError"
@@ -168,6 +173,10 @@ export class Bridge {
       status: r.status,
       model: r.model,
       role: r.role,
+      requestedReasoningEffort: task.reasoningEffort,
+      requestedVariant: task.variant,
+      selectedModel: r.selectedModel,
+      effectiveModel: response?.effectiveModel,
       summary: report.summary,
       findings: report.findings,
       changes: report.changes,

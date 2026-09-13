@@ -6,6 +6,8 @@ export interface Model {
   key: string;
   vision: boolean;
   cost: number;
+  variants?: Array<{ id: string; reasoningEffort?: string }>;
+  reasoningVariants?: Array<{id: string; effort: string}>;
 }
 export function choose(
   models: Model[],

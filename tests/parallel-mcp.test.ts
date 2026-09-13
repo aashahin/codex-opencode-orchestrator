@@ -9,6 +9,7 @@ import { ConfigSchema, type Task } from "../src/config";
 import { parallel, Semaphore } from "../src/parallel";
 import type { Model } from "../src/router";
 import type { Runtime } from "../src/opencode2";
+import { requestedModel } from "../src/reasoning";
 import { fixture, dispose } from "./helpers";
 import { RECOVERY_GUIDANCE, WORKFLOW_GUIDANCE } from "../src/guidance";
 const m: Model = {
@@ -18,6 +19,7 @@ const m: Model = {
   key: "opencode-go/fixture",
   vision: false,
   cost: 0,
+  variants: [{ id: "xhigh", reasoningEffort: "xhigh" }],
 };
 class ControlledRuntime implements Runtime {
   active = 0;
@@ -63,6 +65,7 @@ class ControlledRuntime implements Runtime {
         await writeFile(join(worktree, "a.txt"), "isolated change\n");
       return {
         sessionID: agent,
+        effectiveModel: requestedModel(model, task.reasoningEffort, task.variant),
         text: JSON.stringify({
           summary: "done",
           findings: [],
@@ -117,6 +120,7 @@ test("delegation preserves isolated successful work through parallel failure and
           task: "write",
           role: "implementer",
           mode: "write_isolated",
+          variant: "xhigh",
         },
         { repoDir: repo, task: "fail" },
         { repoDir: repo, task: "timeout", timeoutSeconds: 1 },
@@ -196,9 +200,18 @@ test("MCP schemas, structured responses and error validation through real MCP tr
           repoDir: repo,
           role: "implementer",
           mode: "write_isolated",
+          variant: "xhigh",
         },
       });
       const id = (delegated.structuredContent as any).id;
+      expect((delegated.structuredContent as any).effectiveModel.variant).toBe("xhigh");
+      const recovered = new Bridge(ConfigSchema.parse({}), new ControlledRuntime(), join(base, "state"), join(base, "cache"));
+      try {
+        const record = (await recovered.state.list()).find(r => r.id === id)!;
+        expect(record.requestedVariant).toBe("xhigh");
+        expect(record.selectedModel?.variant).toBe("xhigh");
+        expect(record.effectiveModel?.variant).toBe("xhigh");
+      } finally { await recovered.close(); }
       expect((delegated.structuredContent as any).patchAvailable).toBe(true);
       const diff = await client.callTool({
         name: "oc_worker_diff",
@@ -228,7 +241,7 @@ test("runtime source has V2 network client and never starts a CLI per worker", a
   const s = await Bun.file(
     new URL("../src/opencode2.ts", import.meta.url),
   ).text();
-  expect(s).toContain('from "@opencode-ai/client"');
+  expect(s).toContain('from "@opencode/client"');
   expect(s).not.toContain("@opencode-ai/sdk");
   expect(s).not.toMatch(/command\(\['opencode'/);
   expect(s).not.toContain("Service.ensure(");

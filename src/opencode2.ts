@@ -3,9 +3,12 @@ import {
   type OpenCodeClient,
   type ModelInfo,
   type SessionMessageAssistant,
-} from "@opencode-ai/client";
+} from "@opencode/client";
+import { waitForSession } from "./session-wait";
+import { assertSupportedService } from "./service-version";
+import { requestedModel, verifyModelSelection } from "./reasoning";
 import { randomUUID } from "node:crypto";
-import { Service } from "@opencode-ai/client/service";
+import { Service } from "@opencode/client/service";
 import { command } from "./git";
 import { ROOT, VERSION, type Task, type Config } from "./config";
 import { policy, decision } from "./permissions";
@@ -16,6 +19,7 @@ import { recordProviderProbe, providerProbe } from "./diagnostics";
 export interface RuntimeResult {
   text: string;
   sessionID: string;
+  effectiveModel?: import("@opencode/client").ModelRef;
   tools: Array<{ name: string; status: string }>;
 }
 export interface Runtime {
@@ -55,7 +59,7 @@ export class OpenCode2 implements Runtime {
       endpoint = await Service.discover();
       if (!endpoint) {
         await command(
-          [Bun.which("opencode2") ?? "opencode2", "service", "start"],
+          [Bun.which("opencode") ?? Bun.which("opencode2") ?? "opencode", "service", "start"],
           { max: 4096 },
         );
         endpoint = await Service.discover();
@@ -73,10 +77,7 @@ export class OpenCode2 implements Runtime {
     const health = await client.health.get({
       signal: AbortSignal.timeout(10000),
     });
-    if (!health.healthy || !health.version.startsWith("0.0.0-beta-"))
-      throw Error(
-        "Expected the supported OpenCode 2 beta service; refusing incompatible runtime",
-      );
+    assertSupportedService(health);
     this.endpointIdentity = identity;
     this.current = client;
     return client;
@@ -121,7 +122,7 @@ export class OpenCode2 implements Runtime {
           version: (await command(["codex", "--version"])).toString().trim(),
         },
         opencode2: {
-          binary: Bun.which("opencode2"),
+          binary: Bun.which("opencode") ?? Bun.which("opencode2"),
           version: health.version,
           service: "running",
           api: "healthy",
@@ -136,10 +137,6 @@ export class OpenCode2 implements Runtime {
         },
         zen: {
           credentialInEnvironment: Boolean(process.env.OPENCODE_ZEN_API_KEY),
-        },
-        v1: {
-          installed: Boolean(Bun.which("opencode")),
-          ignoredByOrchestrator: true,
         },
         bridge: { version: VERSION, connected: true },
         routing: mappings(models, config),
@@ -165,7 +162,7 @@ export class OpenCode2 implements Runtime {
     const actual = (await c.agent.get({ agentID: agent, location }, { signal }))
       .data;
     const expected = policy(task.mode, task.scope);
-    // Fail closed on beta policy merge changes, before any prompt or model call.
+    // Verify effective policy before any prompt or model call, including after upgrades.
     if (
       JSON.stringify(actual.permissions.slice(-expected.length)) !==
         JSON.stringify(expected) ||
@@ -181,6 +178,7 @@ export class OpenCode2 implements Runtime {
     ])
       if (decision(actual.permissions, action!, resource!) !== "deny")
         throw Error("V2 policy failed closed");
+    const selectedModel = requestedModel(model, task.reasoningEffort, task.variant);
     const sessionID = "ses_" + randomUUID().replaceAll("-", "");
     await onSession(sessionID);
     const s = await c.session.create(
@@ -188,17 +186,18 @@ export class OpenCode2 implements Runtime {
         id: sessionID,
         title: `Codex ${task.role}`,
         agent,
-        model: { id: model.id, providerID: model.providerID },
+        model: selectedModel,
         location,
       },
       { signal },
     );
     try {
+      verifyModelSelection(selectedModel, s.model);
       await c.session.prompt(
         { sessionID: s.id, text: contract(task, worktree) },
         { signal },
       );
-      await c.session.wait({ sessionID: s.id }, { signal });
+      await waitForSession(c.session, s.id, signal);
       const info = await c.session.get({ sessionID: s.id }, { signal });
       const page = await c.message.list(
         { sessionID: s.id, limit: 200, order: "asc" },
@@ -215,6 +214,8 @@ export class OpenCode2 implements Runtime {
         throw Error(
           `OpenCode 2 session ${info.outcome ?? "incomplete"}: ${redact(messages.find((m) => m.error)?.error?.message ?? "No successful final response", 1000)}`,
         );
+      verifyModelSelection(selectedModel, info.model);
+      for (const message of messages) verifyModelSelection(selectedModel, message.model);
       const last = messages.at(-1)!;
       const text = last.content
         .filter((p) => p.type === "text")
@@ -224,6 +225,7 @@ export class OpenCode2 implements Runtime {
       await recordProviderProbe(model.providerID, model.key, true);
       return {
         sessionID: s.id,
+        effectiveModel: info.model,
         text: redact(text),
         tools: messages.flatMap((m) =>
           m.content
@@ -257,12 +259,14 @@ export class OpenCode2 implements Runtime {
     );
   }
 }
-function normalizeModel(m: ModelInfo): Model {
+export function normalizeModel(m: ModelInfo): Model {
   return {
     id: m.id,
     providerID: m.providerID,
     modelID: m.modelID,
     key: `${m.providerID}/${m.id}`,
+    variants: m.variants.map(v => ({ id: v.id, reasoningEffort: typeof v.settings?.reasoningEffort === "string" ? v.settings.reasoningEffort : undefined })),
+    reasoningVariants: m.variants.filter(v => typeof v.settings?.reasoningEffort === "string").map(v => ({id: v.id, effort: v.settings!.reasoningEffort as string})),
     vision: m.capabilities.input.includes("image"),
     cost: Number(m.cost[0]?.input ?? 0) + Number(m.cost[0]?.output ?? 0),
   };

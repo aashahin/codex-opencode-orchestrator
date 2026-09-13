@@ -1,4 +1,4 @@
-import type { PermissionRule } from "@opencode-ai/client";
+import type { PermissionRule } from "@opencode/client";
 import { mkdir, rename, rm, lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task } from "./config";

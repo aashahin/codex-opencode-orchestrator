@@ -16,8 +16,8 @@ assert.equal(
   "Do not restart a service with active sessions",
 );
 const before = await c.health.get();
-const executable = Bun.which("opencode2");
-assert(executable, "opencode2 must be on PATH");
+const executable = Bun.which("opencode") ?? Bun.which("opencode2");
+assert(executable, "stable opencode must be on PATH");
 await command([executable, "service", "restart"]);
 const after = await (await rt.client()).health.get();
 assert(after.healthy);

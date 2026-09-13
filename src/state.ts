@@ -15,6 +15,10 @@ export interface WorkerRecord {
   id: string;
   role: string;
   model: string;
+  requestedVariant?: string;
+  requestedReasoningEffort?: string;
+  selectedModel?: import("@opencode/client").ModelRef;
+  effectiveModel?: import("@opencode/client").ModelRef;
   status:
     | "running"
     | "completed"
@@ -67,6 +71,10 @@ export class State {
           id: r.id,
           role: r.role,
           model: r.model,
+          requestedVariant: r.requestedVariant,
+          requestedReasoningEffort: r.requestedReasoningEffort,
+          selectedModel: r.selectedModel,
+          effectiveModel: r.effectiveModel,
           status: r.status,
           repo: r.snapshot?.repo,
           worktree: r.snapshot?.worktree,

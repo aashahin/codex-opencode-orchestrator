@@ -1,6 +1,6 @@
 {
   "name": "codex-opencode-orchestrator",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,10 +11,10 @@
     "smoke": "bun scripts/smoke.ts"
   },
   "dependencies": {
-    "@opencode-ai/client": "0.0.0-beta-19271",
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "4.5.4",
-    "@iarna/toml": "2.2.5"
+    "@iarna/toml": "2.2.5",
+    "@opencode/client": "2.0.3"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",

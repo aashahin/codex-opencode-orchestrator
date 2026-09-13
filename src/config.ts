@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-export const VERSION = "1.0.1";
+export const VERSION = "1.1.0";
 export const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 export const roles = [
   "explorer",
@@ -94,6 +94,8 @@ export const TaskSchema = z
     task: z.string().min(1).max(24000),
     role: z.enum(roles).default("explorer"),
     model: z.string().max(200).optional(),
+    variant: z.string().min(1).max(200).optional().describe("Exact variant ID from oc_models, for example xhigh, max, or deep. Never inferred or downgraded."),
+    reasoningEffort: z.string().min(1).max(200).optional().describe("Select an advertised reasoning effort. Prefer variant for an exact catalog selection; if both are supplied they must agree."),
     repoDir: z.string().min(2).max(4096),
     mode: z.enum(["read_only", "write_isolated"]).default("read_only"),
     scope: z.array(z.string().min(1).max(1024)).max(100).default([]),

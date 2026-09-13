@@ -47,7 +47,7 @@ export function createMcp(bridge: Bridge) {
     "oc_models",
     {
       description:
-        "Discover enabled V2 worker models and role routing; no static catalog assumptions.",
+        "Discover enabled worker models, their exact variants and advertised reasoning efforts, and role routing. Inspect variants before requesting xhigh, max, or another variant; availability is model-specific.",
       inputSchema: {},
     },
     () => respond(() => bridge.models()),
@@ -56,7 +56,7 @@ export function createMcp(bridge: Bridge) {
     "oc_delegate",
     {
       description:
-        "Required path for OpenCode work, including follow-up fixes after compaction or errors. Never substitute opencode2 run/--standalone or direct API scripts. Creates one isolated V2 session from a source snapshot; writes require write_isolated; no automatic integration. Recover existing work with oc_list_workers first.",
+        "Required path for OpenCode work, including follow-up fixes after compaction or errors. Never substitute opencode run, opencode2 run/--standalone or direct API scripts. Creates one isolated V2 session from a source snapshot; writes require write_isolated; no automatic integration. Select variant from oc_models (for example xhigh); reasoningEffort is also supported. Recover existing work with oc_list_workers first.",
       inputSchema: TaskSchema,
     },
     (args, extra) => respond(() => bridge.delegate(args, extra.signal)),

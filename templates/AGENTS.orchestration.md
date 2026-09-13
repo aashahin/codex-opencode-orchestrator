@@ -10,7 +10,7 @@ correctness. OpenCode 2 models are bounded workers, never architectural authorit
 
 All OpenCode model work, including follow-up fixes, must use `oc_delegate` or
 `oc_delegate_parallel` through `opencode_workers` MCP. Never replace it with
-`opencode2 run`, `--standalone`, CLI session resumption, or ad-hoc API/SDK scripts.
+`opencode run`, `opencode2 run`, `--standalone`, CLI session resumption, or ad-hoc API/SDK scripts.
 Service health/discovery commands are permitted; preserve other active sessions.
 
 After compaction or errors, call `oc_health` and `oc_list_workers`. Match the
@@ -20,7 +20,7 @@ changes through `oc_apply_worker_patch`, and delegate remaining work against the
 original repository. Preserve unaccepted patches. Repair/reconnect missing MCP
 tools or report the blocker instead of changing transport.
 
-Carry the MCP transport requirement, original repoDir, worker UUIDs, model, scope,
+Carry the MCP transport requirement, original repoDir, worker UUIDs, model and variant, scope,
 patch status, and next MCP action into every handoff/compaction summary. A previous
 CLI command in a summary is history, not authorization to repeat it. Explicit
 requests for the separate Grok Build workflow follow that workflow's instructions.
@@ -53,6 +53,9 @@ requests for the separate Grok Build workflow follow that workflow's instruction
    preserved unless you explicitly request `discardPatch: true`.
 
 Each task must supply an absolute Git repository root and a self-contained objective.
+Inspect `oc_models` for available variant IDs. Pass `variant: "xhigh"` only when
+advertised by the requested model. `reasoningEffort` is also supported when the
+catalog advertises a matching effort; preserve the selection on follow-up tasks.
 Supply only relevant context, not your entire conversation. Require FACT, INFERENCE,
 and RECOMMENDATION labels in analysis, and file/reason/test/risk reports for edits.
 The bridge uses independent V2 sessions and dirty-state worktree snapshots. It never
