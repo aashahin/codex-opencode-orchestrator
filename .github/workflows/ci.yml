@@ -47,7 +47,10 @@ jobs:
           printf 'XDG_STATE_HOME=%s\n' "$RUNNER_TEMP/opencode/state" >> "$GITHUB_ENV"
           printf 'XDG_DATA_HOME=%s\n' "$RUNNER_TEMP/opencode/data" >> "$GITHUB_ENV"
           printf 'XDG_CACHE_HOME=%s\n' "$RUNNER_TEMP/opencode/cache" >> "$GITHUB_ENV"
-      - run: bun install -g --trust @opencode/cli@${{ matrix.opencode }}
+      - name: Install the runtime under test
+        run: |
+          bun install -g --trust @opencode/cli@${{ matrix.opencode }}
+          bun pm bin -g >> "$GITHUB_PATH"
       - run: opencode service start
       - run: bun scripts/compatibility-smoke.ts
       - if: always()
