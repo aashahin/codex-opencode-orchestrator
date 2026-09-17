@@ -1,17 +1,14 @@
 import {
-  OpenCode,
-  type OpenCodeClient,
   type ModelInfo,
   type SessionMessageAssistant,
 } from "@opencode/client";
 import { waitForSession } from "./session-wait";
-import { assertSupportedService } from "./service-version";
 import { requestedModel, verifyModelSelection } from "./reasoning";
 import { randomUUID } from "node:crypto";
-import { Service } from "@opencode/client/service";
+import { compatibleClient, discoverConnection, type CompatibleClient } from "./service-connection";
 import { command } from "./git";
 import { ROOT, VERSION, type Task, type Config } from "./config";
-import { policy, decision } from "./permissions";
+import { policy, decision, workerPlugins } from "./permissions";
 import { contract } from "./prompts";
 import { redact, errorText } from "./security";
 import { mappings, type Model } from "./router";
@@ -37,52 +34,30 @@ export interface Runtime {
   health(config: Config): Promise<unknown>;
 }
 export class OpenCode2 implements Runtime {
-  private connecting?: Promise<OpenCodeClient>;
-  private current?: OpenCodeClient;
+  private connecting?: Promise<CompatibleClient>;
+  private current?: CompatibleClient;
   private endpointIdentity?: string;
-  private async connect(): Promise<OpenCodeClient> {
-    const explicit = process.env.OPENCODE_SERVER_URL;
-    let endpoint;
-    if (explicit) {
-      const u = new URL(explicit);
-      if (
-        u.username ||
-        u.password ||
-        !["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) ||
-        u.protocol !== "http:"
-      )
-        throw Error(
-          "OPENCODE_SERVER_URL must be a loopback HTTP service; remote locations cannot safely share local worktrees",
-        );
-      endpoint = { url: u.toString() };
-    } else {
-      endpoint = await Service.discover();
-      if (!endpoint) {
-        await command(
-          [Bun.which("opencode") ?? Bun.which("opencode2") ?? "opencode", "service", "start"],
-          { max: 4096 },
-        );
-        endpoint = await Service.discover();
-      }
-      if (!endpoint) throw Error("OpenCode 2 shared service not available");
+  private async connect(): Promise<CompatibleClient> {
+    const options = { url: process.env.OPENCODE_SERVER_URL };
+    let connection = await discoverConnection(options);
+    if (!connection) {
+      await command(
+        [Bun.which("opencode") ?? Bun.which("opencode2") ?? "opencode", "service", "start"],
+        { max: 4096 },
+      );
+      connection = await discoverConnection(options);
     }
-    const identity = JSON.stringify(endpoint);
+    if (!connection) throw Error("OpenCode 2 shared service not available");
+    const identity = JSON.stringify([connection.endpoint, connection.protocol, connection.health.pid, connection.health.version]);
     const client =
       this.current && this.endpointIdentity === identity
         ? this.current
-        : OpenCode.make({
-            baseUrl: endpoint.url,
-            headers: Service.headers(endpoint),
-          });
-    const health = await client.health.get({
-      signal: AbortSignal.timeout(10000),
-    });
-    assertSupportedService(health);
+        : compatibleClient(connection);
     this.endpointIdentity = identity;
     this.current = client;
     return client;
   }
-  async client(): Promise<OpenCodeClient> {
+  async client(): Promise<CompatibleClient> {
     if (!this.connecting)
       this.connecting = this.connect().finally(() => {
         this.connecting = undefined;
@@ -124,6 +99,7 @@ export class OpenCode2 implements Runtime {
         opencode2: {
           binary: Bun.which("opencode") ?? Bun.which("opencode2"),
           version: health.version,
+          protocol: c.protocol,
           service: "running",
           api: "healthy",
           pid: health.pid,
@@ -158,7 +134,7 @@ export class OpenCode2 implements Runtime {
   ): Promise<RuntimeResult> {
     const c = await this.client();
     const location = { directory: worktree };
-    await c.plugin.awaitActivation({ location }, { signal });
+    await c.plugin.awaitActivation({ location }, { signal, requiredPlugins: workerPlugins });
     const actual = (await c.agent.get({ agentID: agent, location }, { signal }))
       .data;
     const expected = policy(task.mode, task.scope);

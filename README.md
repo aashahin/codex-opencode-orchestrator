@@ -31,19 +31,25 @@ starting a runtime per task. OpenCode V1 and its SDK are not used.
 ## Install
 
 The reference platform is Linux with Bun 1.4.2, Git, and Codex CLI on `PATH`.
-The CLI and official client are validated at stable **2.0.3** (latest verified
-September 13, 2026). The bridge accepts healthy stable `>=2.0.3 <3.0.0` services;
-beta, dev, RC, older releases, and other major versions are rejected. Exact worker
-permissions and model selections are checked at runtime after version admission.
-The client dependency and lockfile are pinned to `@opencode/client@2.0.3`.
+The bridge supports stable **OpenCode 2.0.0 and later** by detecting the service's
+API capabilities, with no patch-version allowlist or major-version ceiling.
+Compatibility is verified against real 2.0.3 and 2.0.5 services and the latest
+release in CI. New versions using a supported API shape connect automatically;
+a new incompatible API needs an adapter, rather than a version-check workaround.
+Prereleases remain excluded.
+
+The current official client is `@opencode/client@2.0.5`. A second official stable
+client, 2.0.3, is installed as `@opencode/client-legacy` for the earlier API shape.
+Neither is a beta package. Client dependencies remain locked for reproducible
+installs; the detected service protocol selects the adapter at runtime.
 
 Install OpenCode 2 if it is not already available:
 
 ```sh
-bun install -g --trust @opencode/cli@2.0.3
+bun install -g --trust @opencode/cli@latest
 opencode --version
 opencode service start
-opencode api get /api/health
+opencode api get /api/status
 ```
 
 Stable OpenCode installs as `opencode`; this replaces the old V1 command on PATH.
@@ -225,6 +231,26 @@ does not replace a bridge process already loaded in another Codex session.
 The `opencode2` key in `oc_health` remains for response compatibility and reports
 the stable service. No prerelease client or runtime is needed.
 
+### Upgrade compatibility
+
+OpenCode 2.0.5 changed the API despite being a patch release: it replaced
+`/api/health` with `/api/status`, removed plugin `await-activation`, and moved
+session waiting to `/api/experimental/session/:id/wait`. The bridge probes
+`/api/status` first, then `/api/health` only on HTTP 404, and uses the matching
+official client. It waits for required plugins to report active before reading
+models or verifying a worker agent; an initially empty catalog is not readiness.
+
+Authentication failures, malformed responses, missing capabilities, and PID
+mismatches do not trigger a service restart or transport fallback. Existing
+sessions and unapplied patches are preserved. Errors identify the failed probe
+or plugin. This cannot make an arbitrary future breaking API compatible, but it
+avoids requiring a bridge edit for every new version number.
+
+After installing this bridge update, restart Codex once to load the adapters.
+Later compatible OpenCode upgrades are detected by that running bridge without
+reinstalling it. Finish active worker tasks before intentionally restarting the
+OpenCode service itself.
+
 ## Routing and configuration
 
 Default routing preferences (availability is discovered through V2 at runtime):
@@ -308,11 +334,14 @@ output to 32 MiB. Oversized or unsupported snapshots fail before model execution
 
 ## Service, state and recovery
 
-Discovery uses the official `@opencode/client/service` API and XDG registration,
-not a fixed port. The bridge calls `opencode service start` only when discovery
-finds no healthy service. Clients and the background service are reused; each unit
-gets its own session. Registration is rediscovered on operations, including after
-a service restart. No separate bridge daemon is installed.
+Discovery reads the official XDG service registration contract and probes the
+registered loopback endpoint with its native authentication, not a fixed port.
+The bridge calls `opencode service start` only when registration is absent or
+the registered process is confirmed gone. Clients and the background service are
+reused; each unit gets its own session. Registration and protocol are rediscovered
+on operations, including after a service upgrade or restart. The cached client
+changes when the endpoint, authentication, PID, version, or API shape changes.
+No separate bridge daemon is installed.
 
 `OPENCODE_SERVER_URL` may select an existing loopback HTTP V2 service. Remote
 services are refused because local worktree paths/permissions cannot be guaranteed
@@ -330,8 +359,12 @@ and patch collection. Interrupted bridge processes retain IDs for recovery.
 ## Troubleshooting
 
 - **V2 not connected:** `opencode service status`, then
-  `opencode api get /api/health`. Start the service if absent. Do not restart while
+  `opencode api get /api/status` (use `/api/health` on 2.0.3). Start the service if absent. Do not restart while
   other sessions are active.
+- **API mismatch after upgrade:** use `oc_health`; its `opencode2.protocol` identifies
+  the selected adapter. If it still reports bridge 1.1.0 or older, restart Codex to
+  load the installed update. A healthy service with no compatible API is reported
+  explicitly; do not downgrade or bypass MCP merely to suppress the error.
 - **Go authentication/billing:** doctor distinguishes a V2 connection from the last
   live result. `opencode auth login` is the official connection flow. Resolve the
   account balance or choose an enabled free model. Do not copy credentials by hand.
@@ -355,15 +388,21 @@ and patch collection. Interrupted bridge processes retain IDs for recovery.
 ```sh
 bun test
 bun run typecheck
+bun scripts/compatibility-smoke.ts # Real runtime API checks; no model prompts
 ```
 
 Automated tests cover real Git fixtures, dirty snapshots, patch conflicts,
 permission policy, installer preservation, launcher arguments, cancellation,
-concurrency, stable runtime admission, exact model/variant selection, session wait
-cancellation, persistent recovery instructions, and the MCP protocol. They use
+concurrency, capability negotiation, both API generations, delayed plugin readiness,
+upgrade reconnection, malformed/auth responses, exact model/variant selection,
+session wait cancellation, persistent recovery instructions, and the MCP protocol. They use
 controlled worker responses and do not
 require API keys or a running OpenCode service. GitHub Actions runs these tests
-and TypeScript checking on each push and pull request.
+and TypeScript checking on each push and pull request. A real-runtime matrix
+tests 2.0.3, 2.0.5, and `latest`, including a daily scheduled check. Those checks
+exercise catalog/agent readiness, variants, effective permissions, session
+creation, waiting, interruption, and removal without sending model prompts or
+requiring provider credits.
 
 Optional live checks require an OpenCode 2 service and suitable provider access:
 
@@ -392,14 +431,20 @@ The stable smoke defaults to `opencode/muse-spark-1.3-contributor-free`, with
 `xhigh` and `high` variants. Override `OC_SMOKE_MODEL`, `OC_SMOKE_VARIANT`, and
 `OC_SMOKE_EFFORT` for another model advertising both selections. It writes an
 ignored `STABLE-TESTS.json` report and preserves unapplied patches on failure.
+If the provider rejects the free tier, explicitly select an available funded
+model with `OC_SMOKE_MODEL`; the script never silently changes models.
 
 Validation on September 13, 2026 passed all 36 repository tests and TypeScript
 checking. The live stable smoke verified concurrent `xhigh` and `high` workers,
 preserved model selections, isolated editing, reviewed patch application, cleanup,
-and reuse of the running 2.0.3 service. Live checks are opt-in and are not run by CI.
+and reuse of the running 2.0.3 service. Model-execution checks are opt-in and are not run by CI.
+
+The September 17 compatibility update passed 43 repository tests and TypeScript
+checking. The live MCP smoke on 2.0.5 passed with Muse Go, including concurrent
+`xhigh`/`high` tasks and reviewed patch application. The free model rejected access
+with a provider-tier restriction; the separate Go run was selected explicitly.
 
 Official references: [Zen endpoints](https://opencode.ai/docs/zen/),
 [V2 permissions](https://opencode.ai/v2/docs/permissions),
 [V2 agents](https://opencode.ai/v2/docs/agents),
-[V2 configuration](https://opencode.ai/v2/docs/config). API signatures were verified
-against the official stable 2.0.3 client, protocol, and schema packages.
+[V2 configuration](https://opencode.ai/v2/docs/config). API signatures are checked against the official stable 2.0.3 and 2.0.5 clients.

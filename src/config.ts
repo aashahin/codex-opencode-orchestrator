@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 export const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 export const roles = [
   "explorer",

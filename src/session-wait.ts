@@ -1,4 +1,5 @@
 import { ClientError, type OpenCodeClient } from "@opencode/client";
+import { ClientError as LegacyClientError } from "@opencode/client-legacy";
 
 // A session may outlive Bun's socket idle timer; each read wait stays shorter.
 export async function waitForSession(
@@ -14,7 +15,7 @@ export async function waitForSession(
       return;
     } catch (error) {
       signal.throwIfAborted();
-      if (!pollDeadline.aborted || !(error instanceof ClientError) || error.reason !== "Transport") throw error;
+      if (!pollDeadline.aborted || !(error instanceof ClientError || error instanceof LegacyClientError) || error.reason !== "Transport") throw error;
     }
   }
 }

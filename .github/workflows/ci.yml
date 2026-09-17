@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
 
 permissions:
   contents: read
@@ -22,3 +25,30 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: ['2.0.3', '2.0.5', 'latest']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Isolate the test service
+        run: |
+          printf 'XDG_CONFIG_HOME=%s\n' "$RUNNER_TEMP/opencode/config" >> "$GITHUB_ENV"
+          printf 'XDG_STATE_HOME=%s\n' "$RUNNER_TEMP/opencode/state" >> "$GITHUB_ENV"
+          printf 'XDG_DATA_HOME=%s\n' "$RUNNER_TEMP/opencode/data" >> "$GITHUB_ENV"
+          printf 'XDG_CACHE_HOME=%s\n' "$RUNNER_TEMP/opencode/cache" >> "$GITHUB_ENV"
+      - run: bun install -g --trust @opencode/cli@${{ matrix.opencode }}
+      - run: opencode service start
+      - run: bun scripts/compatibility-smoke.ts
+      - if: always()
+        run: opencode service stop

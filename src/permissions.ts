@@ -3,6 +3,13 @@ import { mkdir, rename, rm, lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task } from "./config";
 import { safeRelative } from "./security";
+export const workerPlugins = [
+  "opencode.agent", "opencode.config.agent", "opencode.models.dev",
+  "opencode.provider.opencode", "opencode.vcs.git", "opencode.tools",
+  "opencode.tool.read", "opencode.tool.glob", "opencode.tool.grep",
+  "opencode.tool.edit", "opencode.tool.write", "opencode.tool.patch",
+  "opencode.config.tool-output", "opencode.config.policy",
+];
 export function policy(
   mode: Task["mode"],
   scope: string[] = [],
@@ -116,23 +123,7 @@ export async function installPolicy(
     share: "disabled",
     snapshots: false,
     warming: false,
-    plugins: [
-      "-*",
-      "opencode.agent",
-      "opencode.config.agent",
-      "opencode.models.dev",
-      "opencode.provider.opencode",
-      "opencode.vcs.git",
-      "opencode.tools",
-      "opencode.tool.read",
-      "opencode.tool.glob",
-      "opencode.tool.grep",
-      "opencode.tool.edit",
-      "opencode.tool.write",
-      "opencode.tool.patch",
-      "opencode.config.tool-output",
-      "opencode.config.policy",
-    ],
+    plugins: ["-*", ...workerPlugins],
     tool_output: { max_bytes: 24000, max_lines: 400 },
     agents: {
       [agent]: {
